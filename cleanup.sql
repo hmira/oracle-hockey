@@ -1,12 +1,14 @@
 
---vycistenie
+--cleanup
 drop package zapas_db;
 
 drop view V_zapasy;
 drop view V_timy_body;
+drop view V_statistiky_hracov;
 
-drop sequence S_hokejista_id01
-drop sequence S_tim_id;01drop sequence S_zapas_id;
+drop sequence S_hokejista_id;
+drop sequence S_tim_id;
+drop sequence S_zapas_id;
 drop sequence S_strela_na_branu_id;
 drop sequence S_kontrakt_id;
 

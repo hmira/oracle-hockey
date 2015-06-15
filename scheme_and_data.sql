@@ -1,4 +1,3 @@
-
 --struktury
 
 --1 pomocna 1
@@ -248,16 +247,16 @@ create or replace trigger T_bef_ins_row_strela
 	  and z.cas < to_timestamp(k.do)
 	  and (z.id = :new.zapas);
 
-	  select pozicia_nazov into xpozicia_brankar
-	  from hokejista h
-	  join valid_pozicia vp on h.pozicia = vp.pozicia_id
-	  where pozicia_id = :new.brankar;
-
 	  if xpocet = 0 then
 		  begin
 		  	raise_application_error(-20068, 'Hrac nema kontrakt, nemoze zaznamenat statistiku (strela)');
 		  end;
 	  end if;
+
+	  select pozicia_nazov into xpozicia_brankar
+	  from hokejista h
+	  join valid_pozicia vp on h.pozicia = vp.pozicia_id
+	  where h.id = :new.brankar;
 
 	  if (xpozicia_brankar <> 'brankar') then
 	  	begin
@@ -334,7 +333,7 @@ create or replace trigger T_bef_ins_row_vylucenie
   	  select count(*) into xpocet
 	  from vylucenie v
 	  where (v.hokejista = :new.hokejista)
-	  and v.cas + v.dlzka < :new.cas
+	  and :new.cas between v.cas and (v.cas + v.dlzka )
 	  and (v.zapas = :new.zapas);
 
 	  if xpocet <> 0 then
@@ -387,7 +386,7 @@ create or replace trigger T_bef_ins_row_zapas
 --procedury
 create or replace package zapas_db as
 
-	procedure pridaj(
+	procedure pridaj_zapas(
 		xmesto zapas.mesto%type,
 		xcas varchar2, --'1. 9. 2012 17:12:00'
 		xdoma zapas.tim_doma%type,
@@ -397,12 +396,43 @@ create or replace package zapas_db as
 		xtyp zapas.typ_zapasu%type default null,
 		xukoncenie zapas.ukoncenie_zapasu%type default null
 		);
+
+	procedure pridaj_gol_domaci(
+		xzapas gol.zapas%type,
+		xhokejista_cislo hokejista.cislo%type,
+		xbrankar_cislo hokejista.cislo%type,
+		xcas gol.cas%type,
+		xasistencia1 gol.asistencia1%type default null,
+		xasistencia2 gol.asistencia2%type default null
+		);
+
+	procedure pridaj_gol_hostia(
+		xzapas gol.zapas%type,
+		xhokejista_cislo hokejista.cislo%type,
+		xbrankar_cislo hokejista.cislo%type,
+		xcas gol.cas%type,
+		xasistencia1 gol.asistencia1%type default null,
+		xasistencia2 gol.asistencia2%type default null
+		);
+
+	procedure pridaj_vylucenie_domaci(
+		xzapas vylucenie.zapas%type,
+		xhokejista_cislo hokejista.cislo%type,
+		xcas vylucenie.cas%type,
+		xdlzka vylucenie.dlzka%type default 120);
+
+	procedure pridaj_vylucenie_hostia(
+		xzapas vylucenie.zapas%type,
+		xhokejista_cislo hokejista.cislo%type,
+		xcas vylucenie.cas%type,
+		xdlzka vylucenie.dlzka%type default 120);
+
 end;
 /
 
 create or replace package body zapas_db as
 
-	procedure pridaj(
+	procedure pridaj_zapas(
 		xmesto zapas.mesto%type,
 		xcas varchar2, --'1. 9. 2012 17:12:00'
 		xdoma zapas.tim_doma%type,
@@ -439,6 +469,174 @@ create or replace package body zapas_db as
 				values (xmesto, atimestamp, xdoma, xvonku, xgoly_domaci, xgoly_vonku, atyp, aukoncenie);
 		end if;
 	end;
+
+
+	procedure pridaj_gol_domaci(
+		xzapas gol.zapas%type,
+		xhokejista_cislo hokejista.cislo%type,
+		xbrankar_cislo hokejista.cislo%type,
+		xcas gol.cas%type,
+		xasistencia1 gol.asistencia1%type default null,
+		xasistencia2 gol.asistencia2%type default null
+		)
+	as
+		id_hokejistu number;
+		id_asistencia1 number default null;
+		id_asistencia2 number default null;
+		id_brankara number;
+	begin
+		select h.id into id_hokejistu
+		from hokejista h
+		join kontrakt k on k.hokejista = h.id 
+		join zapas z on (z.tim_doma = k.tim)
+		where h.cislo = xhokejista_cislo
+		and z.id = xzapas;
+
+		if xasistencia1 is not null then
+			select h.id into id_asistencia1
+			from hokejista h
+			join kontrakt k on k.hokejista = h.id 
+			join zapas z on (z.tim_doma = k.tim)
+			where h.cislo = xasistencia1
+			and z.id = xzapas;
+		end if;
+
+		if xasistencia2 is not null then
+			select h.id into id_asistencia2
+			from hokejista h
+			join kontrakt k on k.hokejista = h.id 
+			join zapas z on (z.tim_doma = k.tim)
+			where h.cislo = xasistencia2
+			and z.id = xzapas;
+		end if;
+
+
+		select h.id into id_brankara
+		from hokejista h
+		join kontrakt k on k.hokejista = h.id 
+		join zapas z on (z.tim_vonku = k.tim)
+		where h.cislo = xbrankar_cislo
+		and z.id = xzapas;
+
+		insert into gol(zapas, hokejista, cas, asistencia1, asistencia2)
+			values (xzapas, id_hokejistu, xcas, id_asistencia1, id_asistencia2);
+
+		insert into strela_na_branu( strelec, brankar, zapas, uspesnost_strely)
+			values (id_hokejistu, id_brankara, xzapas, 1);
+	end;
+
+
+	procedure pridaj_gol_hostia(
+		xzapas gol.zapas%type,
+		xhokejista_cislo hokejista.cislo%type,
+		xbrankar_cislo hokejista.cislo%type,
+		xcas gol.cas%type,
+		xasistencia1 gol.asistencia1%type default null,
+		xasistencia2 gol.asistencia2%type default null
+		)
+	as
+		id_hokejistu number;
+		id_asistencia1 number default null;
+		id_asistencia2 number default null;
+		id_brankara number;
+	begin
+		select h.id into id_hokejistu
+		from hokejista h
+		join kontrakt k on k.hokejista = h.id 
+		join zapas z on (z.tim_vonku = k.tim)
+		where h.cislo = xhokejista_cislo
+		and z.id = xzapas;
+
+		if xasistencia1 is not null then
+			select h.id into id_asistencia1
+			from hokejista h
+			join kontrakt k on k.hokejista = h.id 
+			join zapas z on (z.tim_vonku = k.tim)
+			where h.cislo = xasistencia1
+			and z.id = xzapas;
+		end if;
+
+		if xasistencia2 is not null then
+			select h.id into id_asistencia2
+			from hokejista h
+			join kontrakt k on k.hokejista = h.id 
+			join zapas z on (z.tim_vonku = k.tim)
+			where h.cislo = xasistencia2
+			and z.id = xzapas;
+		end if;
+
+
+		select h.id into id_brankara
+		from hokejista h
+		join kontrakt k on k.hokejista = h.id 
+		join zapas z on (z.tim_doma = k.tim)
+		where h.cislo = xbrankar_cislo
+		and z.id = xzapas;
+
+		insert into gol(zapas, hokejista, cas, asistencia1, asistencia2)
+			values (xzapas, id_hokejistu, xcas, id_asistencia1, id_asistencia2);
+
+		insert into strela_na_branu( strelec, brankar, zapas, uspesnost_strely)
+			values (id_hokejistu, id_brankara, xzapas, 1);
+	end;
+
+
+	procedure pridaj_vylucenie_domaci(
+		xzapas vylucenie.zapas%type,
+		xhokejista_cislo hokejista.cislo%type,
+		xcas vylucenie.cas%type,
+		xdlzka vylucenie.dlzka%type default 120)
+	as
+		id_hokejistu number;
+		id_timu number;
+	begin
+		select h.id into id_hokejistu
+		from hokejista h
+		join kontrakt k on k.hokejista = h.id 
+		join zapas z on (z.tim_doma = k.tim)
+		where h.cislo = xhokejista_cislo
+		and z.id = xzapas;
+
+		select k.tim into id_timu 
+		from hokejista h
+		join kontrakt k on k.hokejista = h.id 
+		join zapas z on (z.tim_doma = k.tim)
+		where h.cislo = xhokejista_cislo
+		and z.id = xzapas;
+
+		insert into vylucenie(zapas, tim, hokejista, cas, dlzka)
+		values (xzapas, id_timu, id_hokejistu, xcas, xdlzka);
+
+	end;
+
+	procedure pridaj_vylucenie_hostia(
+		xzapas vylucenie.zapas%type,
+		xhokejista_cislo hokejista.cislo%type,
+		xcas vylucenie.cas%type,
+		xdlzka vylucenie.dlzka%type default 120)
+	as
+		id_hokejistu number;
+		id_timu number;
+	begin
+		select h.id into id_hokejistu
+		from hokejista h
+		join kontrakt k on k.hokejista = h.id 
+		join zapas z on (z.tim_vonku = k.tim)
+		where h.cislo = xhokejista_cislo
+		and z.id = xzapas;
+
+		select k.tim into id_timu 
+		from hokejista h
+		join kontrakt k on k.hokejista = h.id 
+		join zapas z on (z.tim_vonku = k.tim)
+		where h.cislo = xhokejista_cislo
+		and z.id = xzapas;
+
+		insert into vylucenie(zapas, tim, hokejista, cas, dlzka)
+		values (xzapas, id_timu, id_hokejistu, xcas, xdlzka);
+
+	end;
+
 end; --zapas_db
 /
 --exec ZAPAS_DB.PRIDAJ('Kupele', '1. 9. 2012 17:12:00', 1, 2);
@@ -464,18 +662,18 @@ create or replace view V_timy_body as
   count(decode(vysledok, 'vyhra v predlzeni', '1')) as vyhry_v_predlzeni,
   count(decode(vysledok, 'prehra v predlzeni', '1')) as prehry_v_predlzeni
   --SUM(longtable.pocet_bodov)
-  --  OVER (PARTITION BY longtable.id_tymu
-  --  ORDER BY longtable.id_tymu
+  --  OVER (PARTITION BY longtable.id_timu
+  --  ORDER BY longtable.id_timu
   --  RANGE UNBOUNDED PRECEDING) pocet_bodov
   from
-	((select z.id id, t.id id_tymu, t.nazov nazov, t_z.typ_zapasu_nazov typ, u_z.ukoncenie_zapasu_nazov ukoncenie, 3 pocet_bodov, 'vyhra' vysledok
+	((select z.id id, t.id id_timu, t.nazov nazov, t_z.typ_zapasu_nazov typ, u_z.ukoncenie_zapasu_nazov ukoncenie, 3 pocet_bodov, 'vyhra' vysledok
 		from zapas z
 		inner join tim t on z.tim_doma = t.id
 		inner join valid_typ_zapasu t_z on z.typ_zapasu = t_z.typ_zapasu_id
 		inner join valid_ukoncenie_zapasu u_z on z.ukoncenie_zapasu = u_z.ukoncenie_zapasu_id
 	  where z.GOLY_DOMACI > z.GOLY_VONKU)
 	union all 
-	(select z.id id, t.id id_tymu, t.nazov nazov, t_z.typ_zapasu_nazov typ, u_z.ukoncenie_zapasu_nazov ukoncenie, 3 pocet_bodov, 'vyhra' vysledok
+	(select z.id id, t.id id_timu, t.nazov nazov, t_z.typ_zapasu_nazov typ, u_z.ukoncenie_zapasu_nazov ukoncenie, 3 pocet_bodov, 'vyhra' vysledok
 		from zapas z
 		inner join valid_typ_zapasu t_z on z.typ_zapasu = t_z.typ_zapasu_id
 		inner join tim t on z.tim_vonku = t.id
@@ -483,14 +681,14 @@ create or replace view V_timy_body as
 	  where z.GOLY_DOMACI < z.GOLY_VONKU
 	  and z.UKONCENIE_ZAPASU = 1)
 	union all
-	(select z.id id, t.id id_tymu, t.nazov nazov, t_z.typ_zapasu_nazov typ, u_z.ukoncenie_zapasu_nazov ukoncenie, 0 pocet_bodov, 'prehra' vysledok
+	(select z.id id, t.id id_timu, t.nazov nazov, t_z.typ_zapasu_nazov typ, u_z.ukoncenie_zapasu_nazov ukoncenie, 0 pocet_bodov, 'prehra' vysledok
 		from zapas z
 		inner join tim t on z.tim_doma = t.id
 		inner join valid_typ_zapasu t_z on z.typ_zapasu = t_z.typ_zapasu_id
 		inner join valid_ukoncenie_zapasu u_z on z.ukoncenie_zapasu = u_z.ukoncenie_zapasu_id
 	  where z.GOLY_DOMACI < z.GOLY_VONKU)
 	union all 
-	(select z.id id, t.id id_tymu, t.nazov nazov, t_z.typ_zapasu_nazov typ, u_z.ukoncenie_zapasu_nazov ukoncenie, 0 pocet_bodov, 'prehra' vysledok
+	(select z.id id, t.id id_timu, t.nazov nazov, t_z.typ_zapasu_nazov typ, u_z.ukoncenie_zapasu_nazov ukoncenie, 0 pocet_bodov, 'prehra' vysledok
 		from zapas z
 		inner join valid_typ_zapasu t_z on z.typ_zapasu = t_z.typ_zapasu_id
 		inner join tim t on z.tim_vonku = t.id
@@ -498,7 +696,7 @@ create or replace view V_timy_body as
 	  where z.GOLY_DOMACI > z.GOLY_VONKU
 	  and z.UKONCENIE_ZAPASU = 1)
 	union all
-	  (select z.id id, t.id id_tymu, t.nazov nazov, t_z.typ_zapasu_nazov typ, u_z.ukoncenie_zapasu_nazov ukoncenie, 1 pocet_bodov, 'remiza' vysledok
+	  (select z.id id, t.id id_timu, t.nazov nazov, t_z.typ_zapasu_nazov typ, u_z.ukoncenie_zapasu_nazov ukoncenie, 1 pocet_bodov, 'remiza' vysledok
 		from zapas z
 		inner join tim t on z.tim_vonku = t.id
 		inner join valid_typ_zapasu t_z on z.typ_zapasu = t_z.typ_zapasu_id
@@ -506,7 +704,7 @@ create or replace view V_timy_body as
 	  where z.GOLY_DOMACI = z.GOLY_VONKU
 	  and z.UKONCENIE_ZAPASU = 1)
 	union all 
-	  (select z.id id, t.id id_tymu, t.nazov nazov, t_z.typ_zapasu_nazov typ, u_z.ukoncenie_zapasu_nazov ukoncenie, 1 pocet_bodov, 'remiza' vysledok
+	  (select z.id id, t.id id_timu, t.nazov nazov, t_z.typ_zapasu_nazov typ, u_z.ukoncenie_zapasu_nazov ukoncenie, 1 pocet_bodov, 'remiza' vysledok
 		from zapas z
 		inner join tim t on z.tim_doma = t.id
 		inner join valid_typ_zapasu t_z on z.typ_zapasu = t_z.typ_zapasu_id
@@ -514,7 +712,7 @@ create or replace view V_timy_body as
 	  where z.GOLY_DOMACI = z.GOLY_VONKU
 	  and z.UKONCENIE_ZAPASU = 1)
 	union all 
-	(select z.id id, t.id id_tymu, t.nazov nazov, t_z.typ_zapasu_nazov typ, u_z.ukoncenie_zapasu_nazov ukoncenie, 2 pocet_bodov, 'prehra v predlzeni' vysledok
+	(select z.id id, t.id id_timu, t.nazov nazov, t_z.typ_zapasu_nazov typ, u_z.ukoncenie_zapasu_nazov ukoncenie, 2 pocet_bodov, 'prehra v predlzeni' vysledok
 		from zapas z
 		inner join tim t on z.tim_doma = t.id
 		inner join valid_typ_zapasu t_z on z.typ_zapasu = t_z.typ_zapasu_id
@@ -522,7 +720,7 @@ create or replace view V_timy_body as
 	  where z.GOLY_DOMACI > z.GOLY_VONKU
 	  and z.UKONCENIE_ZAPASU <> 1)
 	union all 
-	(select z.id id, t.id id_tymu, t.nazov nazov, t_z.typ_zapasu_nazov typ, u_z.ukoncenie_zapasu_nazov ukoncenie, 2 pocet_bodov, 'prehra v predlzeni' vysledok
+	(select z.id id, t.id id_timu, t.nazov nazov, t_z.typ_zapasu_nazov typ, u_z.ukoncenie_zapasu_nazov ukoncenie, 2 pocet_bodov, 'prehra v predlzeni' vysledok
 		from zapas z
 		inner join valid_typ_zapasu t_z on z.typ_zapasu = t_z.typ_zapasu_id
 		inner join tim t on z.tim_vonku = t.id
@@ -530,7 +728,7 @@ create or replace view V_timy_body as
 	  where z.GOLY_DOMACI < z.GOLY_VONKU
 	  and z.UKONCENIE_ZAPASU <> 1)
 	union all 
-	(select z.id id, t.id id_tymu, t.nazov nazov, t_z.typ_zapasu_nazov typ, u_z.ukoncenie_zapasu_nazov ukoncenie, 1 pocet_bodov, 'vyhra v predlzeni' vysledok
+	(select z.id id, t.id id_timu, t.nazov nazov, t_z.typ_zapasu_nazov typ, u_z.ukoncenie_zapasu_nazov ukoncenie, 1 pocet_bodov, 'vyhra v predlzeni' vysledok
 		from zapas z
 		inner join tim t on z.tim_doma = t.id
 		inner join valid_typ_zapasu t_z on z.typ_zapasu = t_z.typ_zapasu_id
@@ -538,7 +736,7 @@ create or replace view V_timy_body as
 	  where z.GOLY_DOMACI < z.GOLY_VONKU
 	  and z.UKONCENIE_ZAPASU <> 1)
 	union all 
-	(select z.id id, t.id id_tymu, t.nazov nazov, t_z.typ_zapasu_nazov typ, u_z.ukoncenie_zapasu_nazov ukoncenie, 1 pocet_bodov, 'vyhra v predlzeni' vysledok
+	(select z.id id, t.id id_timu, t.nazov nazov, t_z.typ_zapasu_nazov typ, u_z.ukoncenie_zapasu_nazov ukoncenie, 1 pocet_bodov, 'vyhra v predlzeni' vysledok
 		from zapas z
 		inner join valid_typ_zapasu t_z on z.typ_zapasu = t_z.typ_zapasu_id
 		inner join tim t on z.tim_vonku = t.id
@@ -546,6 +744,25 @@ create or replace view V_timy_body as
 	  where z.GOLY_DOMACI > z.GOLY_VONKU
 	  and z.UKONCENIE_ZAPASU <> 1))
   group by nazov;
+
+
+
+ create or replace view V_statistiky_hracov as
+ 	select 
+	  h.CISLO as cislo,
+	  h.MENO || ' ' || h.PRIEZVISKO as meno,
+      v.POZICIA_NAZOV as pozicia,
+	  (select count(*) from gol g where g.hokejista = h.id) as goly,
+	  (select count(*) from gol g where g.asistencia1 = h.id or g.asistencia2 = h.id) as asistencie,
+	  (select count(*) from gol g where g.hokejista = h.id or g.asistencia1 = h.id or g.asistencia2 = h.id)as kanadske_body,
+    round( (select count(*) from gol g where g.hokejista = h.id) / nullif((select count(*) from strela_na_branu snb where snb.strelec = h.id), 0) * 100 ) as uspesnost_striel,
+    NULLIF(
+      (select floor(sum(dlzka)/60) from vylucenie v where v.hokejista = h.id) ||':'|| (select mod(sum(dlzka),60) from vylucenie v where v.hokejista = h.id),
+      ':') as trestne_minuty
+	from hokejista h
+  join valid_pozicia v on h.pozicia = v.pozicia_id
+	order by kanadske_body desc, goly desc, asistencie desc;
+
 
 --testovacie data
 INSERT INTO "TIM" (ID, NAZOV, GPS) VALUES ('1', 'Lev Praha', '100200');
@@ -562,7 +779,10 @@ INSERT INTO "HOKEJISTA" (ID, MENO, PRIEZVISKO, POZICIA, CISLO, DATUM_NARODENIA) 
 INSERT INTO "HOKEJISTA" (ID, MENO, PRIEZVISKO, POZICIA, CISLO, DATUM_NARODENIA) VALUES ('7', 'Peter', 'Bondra', '2', '12', DATE '1974-02-15');
 INSERT INTO "HOKEJISTA" (ID, MENO, PRIEZVISKO, POZICIA, CISLO, DATUM_NARODENIA) VALUES ('8', 'Marian', 'Gaborik', '3', '10', DATE '1973-02-15');
 INSERT INTO "HOKEJISTA" (ID, MENO, PRIEZVISKO, POZICIA, CISLO, DATUM_NARODENIA) VALUES ('9', 'Andrej', 'Sekera', '4', '28', DATE '1977-02-03');
-INSERT INTO "HOKEJISTA" (ID, MENO, PRIEZVISKO, POZICIA, CISLO, DATUM_NARODENIA) VALUES ('10', 'Zdeno', 'Chara', '4', '7', DATE '1978-03-02');
+INSERT INTO "HOKEJISTA" (ID, MENO, PRIEZVISKO, POZICIA, CISLO, DATUM_NARODENIA) VALUES ('10', 'Zdeno', 'Chara', '4', '3', DATE '1978-03-02');
+
+INSERT INTO "HOKEJISTA" (ID, MENO, PRIEZVISKO, POZICIA, CISLO, DATUM_NARODENIA) VALUES ('11', 'Dominik', 'Hasek', '5', '33', DATE '1978-03-02');
+INSERT INTO "HOKEJISTA" (ID, MENO, PRIEZVISKO, POZICIA, CISLO, DATUM_NARODENIA) VALUES ('12', 'Jan', 'Laco', '5', '30', DATE '1978-03-02');
 
 INSERT INTO "KONTRAKT" (ID, HOKEJISTA, TIM, OD, DO, SUMA) VALUES ('1', '1', '1', DATE '2005-01-01', DATE '2018-01-01', '1000');
 INSERT INTO "KONTRAKT" (ID, HOKEJISTA, TIM, OD, DO, SUMA) VALUES ('2', '2', '1', DATE '2005-01-01', DATE '2018-01-01', '1000');
@@ -576,7 +796,13 @@ INSERT INTO "KONTRAKT" (ID, HOKEJISTA, TIM, OD, DO, SUMA) VALUES ('8', '8', '2',
 INSERT INTO "KONTRAKT" (ID, HOKEJISTA, TIM, OD, DO, SUMA) VALUES ('9', '9', '2', DATE '2005-01-01', DATE '2018-01-01', '1000');
 INSERT INTO "KONTRAKT" (ID, HOKEJISTA, TIM, OD, DO, SUMA) VALUES ('10','10','2', DATE '2005-01-01', DATE '2018-01-01', '1000');
 
-ZAPAS_DB.PRIDAJ('Praha', '1. 9. 2012 17:00:00', 1, 2);
-ZAPAS_DB.PRIDAJ('Praha', '2. 9. 2012 17:00:00', 1, 2);
-ZAPAS_DB.PRIDAJ('Praha', '4. 9. 2012 17:00:00', 1, 2);
-ZAPAS_DB.PRIDAJ('Praha', '5. 9. 2012 17:00:00', 1, 2);
+INSERT INTO "KONTRAKT" (ID, HOKEJISTA, TIM, OD, DO, SUMA) VALUES ('11','11','1', DATE '2005-01-01', DATE '2018-01-01', '1000');
+INSERT INTO "KONTRAKT" (ID, HOKEJISTA, TIM, OD, DO, SUMA) VALUES ('12','12','2', DATE '2005-01-01', DATE '2018-01-01', '1000');
+
+exec ZAPAS_DB.PRIDAJ_ZAPAS('Praha', '1. 9. 2012 17:00:00', 1, 2);
+exec ZAPAS_DB.PRIDAJ_ZAPAS('Praha', '2. 9. 2012 17:00:00', 1, 2);
+exec ZAPAS_DB.PRIDAJ_ZAPAS('Praha', '4. 9. 2012 17:00:00', 1, 2);
+exec ZAPAS_DB.PRIDAJ_ZAPAS('Praha', '5. 9. 2012 17:00:00', 1, 2);
+
+exec ZAPAS_DB.PRIDAJ_GOL_HOSTIA(1,12,33,1657);
+exec ZAPAS_DB.PRIDAJ_GOL_DOMACI(1,68,30,1800,7,28);
